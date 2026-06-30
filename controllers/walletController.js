@@ -7,6 +7,7 @@ async function saveIdempotency(client, key, status, body) {
     );
 }
 
+// 1. Get Wallet Balance, Inventory, and Claimed Rewards Details
 export const getWallet = async (req, res) => {
     const { playerId } = req.params;
     try {
@@ -26,6 +27,7 @@ export const getWallet = async (req, res) => {
     }
 };
 
+// 2. Credit Wallet Balance (Atomic Update via UPSERT)
 export const creditWallet = async (req, res) => {
     const { playerId } = req.params;
     const { amount, reason } = req.body;
@@ -56,6 +58,7 @@ export const creditWallet = async (req, res) => {
     }
 };
 
+// 3. Purchase Item (Atomic Verification under Strict Row-Level Lock Protection)
 export const purchaseItem = async (req, res) => {
     const { playerId } = req.params;
     const { itemId, price } = req.body;
@@ -68,7 +71,14 @@ export const purchaseItem = async (req, res) => {
     try {
         await client.query('BEGIN');
         
-        // CRITICAL: FOR UPDATE applies the row-level exclusive lock to isolate race conditions
+        // Ensure the wallet row exists first before locking it
+        await client.query(`
+            INSERT INTO wallets (player_id, balance) 
+            VALUES ($1, 0) 
+            ON CONFLICT (player_id) DO NOTHING
+        `, [playerId]);
+
+        // CRITICAL: The row exists, so FOR UPDATE will successfully apply the lock!
         const walletRes = await client.query('SELECT balance FROM wallets WHERE player_id = $1 FOR UPDATE', [playerId]);
 
         if (walletRes.rows.length === 0 || walletRes.rows[0].balance < price) {
